@@ -1,0 +1,78 @@
+---
+title: "Machine Learning Project"
+output: html_document
+---
+
+# Executive Summary
+The purpose of this project is to create an algorithm to predict the 'classe' variable. The classe varialbe contains 1 correct way of doing the exercise (label A) and 4 different incorrect ways of doing the exercise (B through E). More information can be found at: http://groupware.les.inf.puc-rio.br/har. Once the Data is cleaned up I used a Random Forest Model to make predictions.
+
+## Initial Data cleaning
+
+In this section the most usable and useful columns were choosen as the variables to be predictors. The first 7 columns related to time and windows were removed as they are not easily fit into a Random Forest Model. Additionally, any columns that had missing values or #/Div0 errors were removed. This left only 53 numerical columns for predictors.
+
+```{r}
+library(ggplot2)
+library(caret)
+training<-read.csv("pml-training.csv")
+testing<-read.csv("pml-testing.csv")
+
+index<-vector(length=dim(training)[2])
+for (i in 1: dim(training)[2]){ ##create index for removing columns with NAs
+  
+  index[i]<-sum(is.na(training[,i]))==0
+
+}
+
+training2<-training[,index]
+training2<-training2[,-(1:7)] ##remove user and time information
+train.factors<-sapply(training2,class)=="factor" ##identify non-numeric columns to remove
+training3<-cbind(training2[,!train.factors],classe=training2$classe)
+testing2<-testing[,index]
+testing2<-testing2[,-(1:7)] ##remove user and time information
+problemid<-testing2$problem_id
+testing3<-testing2[,!train.factors]
+
+```
+
+## Create Cross-Validation Set and make Random Forest Model 
+
+In this section the data is broken into training and cross validation sets, 25% went to the training set and 75% to the cross-validation set. Parallel processors were then used to help speed up the model creation. The model used was a Random Forest model with 10-fold cross validation. That is when creating each of the 500 trees for the forest each set was broken up into 10 different training sets and the one with the best results was choose for that tree. This process was repeated 500 times, 1 for each tree. 
+
+```{r}
+set.seed(314) ## break out training set into training and cross validation testing sets
+inTrain<-createDataPartition(y=training3$classe, p = .25,list=FALSE)
+train.train<-training3[inTrain,]
+train.cvtest<-training3[-inTrain,]
+
+## Run parallel clusters
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                           allowParallel = TRUE)
+
+##Create Random Forest Model
+modFitrf<-train(classe~.,method="rf",data=train.train, trControl = fitControl) ##verbose=FALSE) ##prox=TRUE)
+predrf<-predict(modFitrf,newdata=train.cvtest)
+confusionMatrix(predrf,train.cvtest$classe)
+
+##Predicting test data
+pred.test<-predict(modFitrf,newdata = testing3)
+pred.test<-cbind(problemid,pred.test)
+##write.csv(pred.test,file="RF Model predictions.csv")
+##Stop Clusters
+stopCluster(cluster)
+```
+
+## Display Final Model Results
+```{r}
+modFitrf$finalModel
+confusionMatrix(predrf,train.cvtest$classe)
+```
+
+## Conclusions
+
+Overall, we see that the model performed very well. It has an OOB (out of bag) estimated error rate of 2.55% meaning that when the cross-validations were done within each tree there was only an error rate of 2.55%. This is also validated by looking at the out of sample error from the 75% of data I held out for cross-validation which had a 97.54% accuracy rate or 2.46% error rate. 
